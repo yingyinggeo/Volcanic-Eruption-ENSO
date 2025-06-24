@@ -1,0 +1,461 @@
+lat = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lat');
+lon = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lon');
+% climatology ts
+filePattern = '/Volumes/WIN11NEW/TS_merge_new/TS_merge_b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.%03d.cam.h0.1243_1257.nc';
+% 循环读取文件
+for i = 1
+   fileName = sprintf(filePattern, i);    
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        tmp = ncread(fileName, 'TS'); 
+        ts(:,:,:,i) = tmp(:,:,13:180,i);
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+
+for i = 2:15  % 从 001 到 015
+    fileName = sprintf(filePattern, i);
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        ts(:,:,:,i) = ncread(fileName, 'TS'); 
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+clear i; clear fileName; clear filePattern; clear tmp;
+%% calculate the climatology's elnino lanina neural class
+% clear ts;  clear fileName; clear filePattern; clear tmp; clear ts_cli;
+f_var_per = permute(ts,[2,1,3,4])-273.15; clear ts_ens_cesm;
+f_var_per_flip = flipud(f_var_per); clear f_var_per;
+lat_af = flipud(lat);
+lon_af = lon;
+clear lon; clear lat;
+
+s = size(f_var_per_flip);
+var_fi = nan(s(1),s(2),s(3),s(4));
+
+if(lon_af(1)>=0)
+    idx = find(lon_af<=180);
+    n1 = length(idx); n2 = length(lon_af)-length(idx);
+    tmp1 = lon_af(1:n1); tmp2 = lon_af(n1+1:end)-360;
+    lon_af(n2+1:end) = tmp1;
+    lon_af(1:n2) = tmp2;
+    tmp1 = f_var_per_flip(:,1:n1,:,:); tmp2 = f_var_per_flip(:,n1+1:end,:,:);
+    var_fi(:,1:n2,:,:) = tmp2;
+    var_fi(:,n2+1:end,:,:) = tmp1;
+end
+clear f_var_per_flip; clear tmp1; clear tmp2;
+ts_per_fl = var_fi; clear var_fi;
+clear var_fi; clear f_var_per_flip; clear f_var; clear ts_ens; clear f_var_per; clear tmp1; clear tmp2; 
+
+
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+lat_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','latitude');
+lon_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','longitude');
+hadisst_per = permute(hadisst,[2,1,3]);  % 1961-1-1  1093   %2005-12-15  1632
+
+mask_sst_tmp = squeeze(hadisst_per(:,:,end));
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+hadisst_per_re = imresample([1 1], hadisst_per,[reso_lon,reso_lat],'linear');
+
+lat_05deg = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon_05deg = -180+reso_lon/2:reso_lon:180-reso_lon/2;
+[glon_05deg,glat_05deg] = meshgrid(lon_05deg,lat_05deg);
+[nlat_05deg,nlon_05deg] = size(glon_05deg);
+
+display ('Generating Area Mask ...');
+map = ones(nlat_05deg,nlon_05deg);
+R = georasterref('RasterSize', [nlat_05deg nlon_05deg], ...
+    'RasterInterpretation', 'cells', 'ColumnsStartFrom', 'north', ...
+    'LatitudeLimits', [lat_05deg(end) lat_05deg(1)], 'LongitudeLimits', [lon_05deg(1) lon_05deg(end)]);
+ellipsid = referenceEllipsoid('Earth','km');
+[~,areavec] = areamat(map,R,ellipsid);
+[~,map_area0] = meshgrid(lon_05deg,areavec);
+mask_area = map_area0;
+mask_area(isnan(mask_sst)) = nan;
+%%%%%%%%%%%%%%%%begin calculate SST mask%%%%%%%%%%%%%%%%%%%%
+nino_mask = mask_area;       % 5N-5S, 170W-120W
+nino_mask_final = mask_area;
+nino_mask(46:51,5:24) = 999; nino_mask(nino_mask~=999) = nan;
+nino_mask_final(isnan(nino_mask)) = nan;
+
+mask = nino_mask_final;
+for iens = 1:15
+    data_no_areaweight = squeeze(ts_per_fl(:,:,:,iens)); 
+    mask_2D_mean = nanmean(reshape(mask,size(mask,1)*size(mask,2),1)); 
+    ss = size(data_no_areaweight);
+    temp = nan(ss(1),ss(2),ss(3));
+    for i = 1:ss(3)
+        temp(:,:,i) = data_no_areaweight(:,:,i).*mask./mask_2D_mean; 
+    end
+    data = temp;
+    s = size(data);
+    for i = 1:s(3)
+        t = squeeze(data(:,:,i));
+        data_cli_series(i,1) = nanmean(reshape(t,size(data,1)*size(data,2),1));
+    end
+    data_cli_series_nmeber(:,iens) = movmean(data_cli_series,5);
+end
+
+% 计算elnino lanina neural 年份
+elnino_cli_years = nan(15,15);
+lanina_cli_years = nan(15,15);
+neural_cli_years = nan(15,15);
+
+for iens = 1:15
+    cli_re = reshape(squeeze(data_cli_series_nmeber(:,iens)),[12 168/12]);
+    cli_nino34 = cli_re(12,1:end-1);
+    cli_nino34(2:3,:) = cli_re(1:2,2:end);
+    cli_nino34_real = squeeze(nanmean(cli_nino34,1));
+    cli_nino34_real = cli_nino34_real';
+    cli_ano_nino34 = cli_nino34_real - nanmean(cli_nino34_real);
+    cli_nino34_value(:,iens) = nanmean(cli_nino34_real);
+
+    elnino_cli_years(1:length(find(cli_ano_nino34>0.5)),iens) = find(cli_ano_nino34>0.5);
+    lanina_cli_years(1:length(find(cli_ano_nino34< -0.5)),iens) = find(cli_ano_nino34<-0.5);
+    neural_cli_years(1:length(find(cli_ano_nino34> -0.5 & cli_ano_nino34<0.5)),iens)  = find(cli_ano_nino34> -0.5 & cli_ano_nino34<0.5);
+end
+save climatology_diff_class.mat neural_cli_years elnino_cli_years lanina_cli_years;
+%% Exp ts
+lat = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lat');
+lon = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lon');
+
+filePattern = '/Volumes/Untitled/TS/TS_merge_merge_b.e11.B1850C5CN.f19_g16.LME.April.1258.%03d.Pacemaker.cooling.ATL.mme.cam.h0.1258_1260.nc';
+% 循环读取文件
+for i = 1:15  % 从 001 到 015
+    % 生成当前文件名
+    fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        ts_exp(:,:,:,i) = ncread(fileName, 'TS'); 
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+clear i;
+clear fileName; clear filePattern; clear tmp;
+
+lanina_group = [2 4 9 10 12 13 15];
+elnino_group = [3 6 11];
+neural_group = [1 5 7 8 14];
+
+%% climatology U
+filePattern = '/Volumes/WIN11NEW/U_merge_new/U_merge_b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.%03d.cam.h0.1243_1257.nc';
+% 循环读取文件
+for i = 1
+   fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        tmp = ncread(fileName, 'U'); 
+        u(:,:,:,:,i) = tmp(:,:,:,13:180,i);
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+
+for i = 2:15  % 从 001 到 015
+    % 生成当前文件名
+    fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        u(:,:,:,:,i) = ncread(fileName, 'U'); 
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+clear i; clear fileName; clear filePattern; clear tmp;
+%% Exp U
+filePattern = '/Volumes/Untitled/U/U_merge_merge_b.e11.B1850C5CN.f19_g16.LME.April.1258.%03d.Pacemaker.cooling.ATL.mme.cam.h0.1258_1260.nc';
+% 循环读取文件
+for i = 1:15  % 从 001 到 015
+    % 生成当前文件名
+    fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        u_exp(:,:,:,:,i) = ncread(fileName, 'U'); 
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+clear i;
+u_mme_exp = squeeze(nanmean(u_exp,5));
+clear fileName; clear filePattern; clear tmp;
+%% climatology V
+filePattern = '/Volumes/WIN11NEW/V_merge_new/V_merge_b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.%03d.cam.h0.1243_1257.nc';
+
+% 循环读取文件
+for i = 1
+   fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        tmp = ncread(fileName, 'V'); 
+        v(:,:,:,:,i) = tmp(:,:,:,13:180,i);
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+
+for i = 2:15  % 从 001 到 015
+    % 生成当前文件名
+    fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        v(:,:,:,:,i) = ncread(fileName, 'V'); 
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+clear i; clear fileName; clear filePattern; clear tmp;
+
+%% Exp V
+filePattern = '/Volumes/Untitled/V/V_merge_merge_b.e11.B1850C5CN.f19_g16.LME.April.1258.%03d.Pacemaker.cooling.ATL.mme.cam.h0.1258_1260.nc';
+% 循环读取文件
+for i = 1:15  % 从 001 到 015
+    % 生成当前文件名
+    fileName = sprintf(filePattern, i);
+    
+    % 检查文件是否存在（可选）
+    if exist(fileName, 'file')
+        disp(['正在读取文件: ', fileName]);
+        
+        % 读取 NetCDF 文件中的某个变量，例如 'OMEGA'
+        v_exp(:,:,:,:,i) = ncread(fileName, 'V'); 
+        
+        % 这里可以对数据进行处理，例如存储到数组中
+        % data{i} = omegaData;
+    else
+        disp(['文件不存在: ', fileName]);
+    end
+end
+clear i;
+v_mme_exp = squeeze(nanmean(v_exp,5));
+clear fileName; clear filePattern; clear tmp;
+
+%% prepare for plot
+%%
+ts_cli_monthly_per = permute(ts,[2 1 3 4]); ts_cli_monthly_per_fl = flipud(ts_cli_monthly_per);
+ts_exp_per = permute(ts_exp,[2 1 3 4]); ts_exp_per_fl = flipud(ts_exp_per);
+
+u_cli_monthly_per = permute(u,[2 1 3 4 5]); u_cli_monthly_per_fl = flipud(u_cli_monthly_per);
+u_exp_per = permute(u_exp,[2 1 3 4 5]); u_exp_per_fl = flipud(u_exp_per);
+
+v_cli_monthly_per = permute(v,[2 1 3 4 5]); v_cli_monthly_per_fl = flipud(v_cli_monthly_per);
+v_exp_per = permute(v_exp,[2 1 3 4 5]); v_exp_per_fl = flipud(v_exp_per);
+
+clear pattern_ts; clear pattern_u; clear pattern_v;
+clear pv_ts; clear pv_u; clear pv_v;
+
+load /Users/yingyingfeng/Downloads/Pacemaker/U_OMEGA_time_evolution/climatology_diff_class.mat neural_cli_years elnino_cli_years lanina_cli_years;
+
+lanina_group = [2 4 9 10 12 13 15];
+elnino_group = [3 6 11];
+neural_group = [1 5 7 8 14];
+
+group = neural_group;
+group_cli = neural_cli_years+1;
+
+% avg
+k_ts_re = reshape(ts_cli_monthly_per_fl,96,144,12,168/12,15);
+k_ts_re_group = nan(96,144,3,14,15);
+for iens = 1:15
+    k_tmp = group_cli(:,iens);
+    k_len = length(find(~isnan(k_tmp)));
+    k_ts_re_group(:,:,1:3,1:k_len,iens) = k_ts_re(:,:,7:9,group_cli(1:k_len,iens),iens);
+end
+pattern_ts= squeeze(nanmean(ts_exp_per_fl(:,:,4:6,group),[3,4])) - nanmean(k_ts_re_group,[3 4 5]);
+
+k_ts_re_group_AMJ = squeeze(nanmean(k_ts_re_group,3));
+k_ts_re_group_AMJ_re = reshape(k_ts_re_group_AMJ,96,144,size(k_ts_re_group_AMJ,3).*size(k_ts_re_group_AMJ,4));
+[~, pv_ts] =  ttest2( squeeze(nanmean(ts_exp_per_fl(:,:,4:6,group),3)) , k_ts_re_group_AMJ_re, 'dim', 3 );
+
+
+k_u_re = reshape(u_cli_monthly_per_fl,96,144,30,12,168/12,15);
+k_u_re_group = nan(96,144,30,3,14,15);
+for iens = 1:15
+    k_tmp = group_cli(:,iens);
+    k_len = length(find(~isnan(k_tmp)));
+    k_u_re_group(:,:,:,1:3,1:k_len,iens) = k_u_re(:,:,:,7:9,group_cli(1:k_len,iens),iens);
+end
+pattern_u =nanmean(u_exp_per_fl(:,:,:,4:6,group),[4,5]) - nanmean(k_u_re_group,[4 5 6]);
+
+k_u_re_group_AMJ = squeeze(nanmean(k_u_re_group,4));
+k_u_re_group_AMJ_re = reshape(k_u_re_group_AMJ,96,144,30,size(k_u_re_group_AMJ,4).*size(k_u_re_group_AMJ,5));
+[~, pv_u] =  ttest2( squeeze(nanmean(u_exp_per_fl(:,:,:,1:3,group),4)) , k_u_re_group_AMJ_re, 'dim', 4 );
+
+
+k_v_re = reshape(v_cli_monthly_per_fl,96,144,30,12,168/12,15);
+k_v_re_group = nan(96,144,30,3,14,15);
+for iens = 1:15
+    k_tmp = group_cli(:,iens);
+    k_len = length(find(~isnan(k_tmp)));
+    k_v_re_group(:,:,:,1:3,1:k_len,iens) = k_v_re(:,:,:,7:9,group_cli(1:k_len,iens),iens);
+end
+pattern_v =nanmean(v_exp_per_fl(:,:,:,4:6,group),[4,5]) - nanmean(k_v_re_group,[4 5 6]);
+
+k_v_re_group_AMJ = squeeze(nanmean(k_v_re_group,4));
+k_v_re_group_AMJ_re = reshape(k_v_re_group_AMJ,96,144,30,size(k_v_re_group_AMJ,4).*size(k_v_re_group_AMJ,5));
+[~, pv_v] =  ttest2( squeeze(nanmean(v_exp_per_fl(:,:,:,1:3,group),4)) , k_v_re_group_AMJ_re, 'dim', 4 );
+
+%% plot
+% no nan-sig
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+hadisst_per = permute(hadisst,[2,1,3]);  % 1961-1-1  1093   %2005-12-15  1632
+mask_sst_tmp = squeeze(hadisst_per(:,:,end)); clear hadisst_per;
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+mask_sst_rep = repmat(mask_sst,1,1,30);
+
+mask_final = mask_sst_rep; mask_final(:,1:72,:) = mask_sst_rep (:,73:144,:); mask_final(:,73:144,:) = mask_sst_rep (:,1:72,:);
+pattern_ts(isnan(squeeze(mask_final(:,:,1)))) = nan;
+pv_ts(isnan(squeeze(mask_final(:,:,1)))) = nan;
+pattern_u(isnan(mask_sst_rep)) = nan;
+pattern_v(isnan(mask_sst_rep)) = nan;
+pattern_u(pv_u>0.1 &pv_v>0.1) = nan;
+pattern_v(pv_u>0.1 & pv_v>0.1) = nan;
+
+% prepare for plot
+reso_lat = 1.875; reso_lon = 2.5;
+lat = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon = 0+reso_lon/2:reso_lon:360-reso_lon/2;
+load coastlines;
+iiid = find(coastlon<0);
+coastlon_new = coastlon;
+coastlon_new(iiid) = coastlon(iiid)+360;
+
+coastlon_new(coastlon_new>358.5) = nan;
+coastlon_new(coastlon_new<-358.5) = nan;
+coastlat(coastlat>88.5) = nan;
+coastlat(coastlat<-88.5) = nan;
+coastlat(coastlat>-0.125&coastlat<1.025) = nan;
+
+[x,y] = meshgrid(0+7.5:15:360-7.5,90-7.5:-15:-90+7.5); 
+u_pattern_re = imresample([2.5 1.875],pattern_u,[15,15],'linear');
+v_pattern_re = imresample([2.5 1.875],pattern_v,[15,15],'linear');
+
+% begain plot
+page_width = 18;
+page_height = 18;
+figure('Units','centimeters',...
+       'position',[0 0 page_width page_height],...
+       'PaperPosition',[0 0 page_width page_height],...
+       'color',[1 1 1]);
+   
+% set position of three subplots
+nrow=1;
+ncol=1;
+width = 0.375;
+height = width./3;
+epsw = 0.1;
+epsh = 0.1;
+xstart=0.075;
+ystart=0.05;
+pos = zeros(nrow*ncol,4);
+for r=1:nrow
+    for c=1:ncol
+        pos((r-1)*ncol+c,1)=xstart + (c-1)*(width+epsw);
+        pos((r-1)*ncol+c,2)=1-(ystart+r*height+(r-1)*epsh);
+        pos((r-1)*ncol+c,3)=width;
+        pos((r-1)*ncol+c,4)=height;
+    end
+end
+
+% labels
+Label = {'MAM (1258)', 'MAM (1259)','JJA (1258)','JJA (1259)','SON (1258)', 'SON (1259)','DJF(1258/1259)','DJF (1259/1260)'};
+Label_abc = {'a', 'e', 'b','f','c','g','d','h'};
+
+for inum = 1:nrow * ncol
+    ax= axes('Position',pos(inum,:),'Color','none');
+    set(ax, 'ylim' , [-60, 60],'YTick',-60:30:60,'TickDir','out', 'TickLength',[0.005/0.3, 0],...
+        'YTickLabel',{'60S','','EQ' ,'','60N'},'FontName','Helvetica','FontSize',12);
+    set(ax, 'xlim' , [0.25 359.75], 'XTick',0:90:360,'TickDir','out', 'TickLength',[0.005/0.3, 0],'XTickLabel',{'0','90E','180','90W', '0'},'FontName','Helvetica','FontSize',12);
+
+    hold on;
+    [c,h] = contourf(lon, lat, pattern_ts, 'LevelList', [-100,  -30: 0.01 : 30, 100]);
+    h.LineColor = 'none';
+  
+    load ttz_color_hgt.mat
+    ttz_color_flip = flipud(ttz_color_hgt);
+    mycolor(1,:) = [0 38 97]./255;
+    mycolor(2:6,:) = ttz_color_flip ([3 4 6 8 10],:);
+    mycolor(7,:) = [1 1 1]; mycolor(8,:) = [1 1 1];
+    mycolor(9:13,:) = ttz_color_flip([12 13 15 17 19],:);
+    mycolor(14,:) =  [141 0 0]./255;
+
+    x_original = 1:14;
+    x_new = linspace(1, 14, 150);
+    data_interp = zeros(150, 3);
+    for col = 1:3
+        data_interp(:, col) = interp1(x_original, mycolor(:, col), x_new, 'linear');  % 可选方法如 'spline'
+    end
+    colormap(data_interp);
+    caxis([-2.5 2.5]);
+    hold on;
+    plot(coastlon_new, coastlat,'k');
+
+    hold off;
+    %
+    u_plot = squeeze(u_pattern_re(:,:,24));  v_plot = squeeze(v_pattern_re(:,:,24)); 
+    u_plot(isnan(u_plot) | isinf(u_plot)) = 0;
+    v_plot(isnan(v_plot) | isinf(v_plot)) = 0; 
+    ncquiverref(x,y, u_plot, v_plot,'',2, 'veccol', [0 0 0]); %
+    hold on;
+    box off
+    ax=gca;
+    axes('position',ax.Position,'box','on','ytick',[],'xtick',[],'color','none')
+end
+
+% colorbar
+cb1=colorbar(ax,'location','southoutside','position',[0.25 0.1 0.5 0.015]);
+set(cb1,'ticks', [-2:1:2], 'XTickLabel',{'-2','-1','0','1','2'},'ticklength', 0.005/0.4 ,'fontsize',12);
+
+cb1ax = axes('position', cb1.Position, 'visible', 'off');
+text(cb1ax, 0.5, -4, 'Amonaly in SST (\circC)','Fontname','Helvetica','fontsize',12,'horizontalalignment','center' );
+% 
+img =gcf;
+print(img, '-dtiff', '-r600', 'C_P_Pacemaker_pattern_TS_UV_cooling_ATL_notinclude_nonsig_neural_group_1258_JAS.tif');
