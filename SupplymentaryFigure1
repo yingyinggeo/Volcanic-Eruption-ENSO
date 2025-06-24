@@ -1,0 +1,154 @@
+clear; clc;
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+lat_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','latitude');
+lon_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','longitude');
+hadisst_per = permute(hadisst,[2,1,3]); 
+
+mask_sst_tmp = squeeze(hadisst_per(:,:,end)); clear hadisst_per;
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+
+lat_05deg = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon_05deg = -180+reso_lon/2:reso_lon:180-reso_lon/2;
+[glon_05deg,glat_05deg] = meshgrid(lon_05deg,lat_05deg);
+[nlat_05deg,nlon_05deg] = size(glon_05deg);
+
+display ('Generating Area Mask ...');
+map = ones(nlat_05deg,nlon_05deg);
+R = georasterref('RasterSize', [nlat_05deg nlon_05deg], ...
+      'RasterInterpretation', 'cells', 'ColumnsStartFrom', 'north', ...
+      'LatitudeLimits', [lat_05deg(end) lat_05deg(1)], 'LongitudeLimits', [lon_05deg(1) lon_05deg(end)]);
+ellipsid = referenceEllipsoid('Earth','km');  
+[~,areavec] = areamat(map,R,ellipsid);  
+[~,map_area0] = meshgrid(lon_05deg,areavec);
+mask_area = map_area0;
+mask_area(isnan(mask_sst)) = nan;
+%%%%
+%
+load /Users/yingyingfeng/Downloads/Data/Paleo3bs_Project/Result_Data/iLME_Full_ts_mme.mat ts_per_fl lat_af lon_af time_850_1849 time_1850_2005;
+size(ts_per_fl);
+ts_iens = squeeze(nanmean(ts_per_fl,4)); clear ts_per_fl;
+mask_area_rep = repmat(mask_area,[1 1 size(ts_iens,3)]);
+ts_iens(isnan(mask_area_rep)) = nan;
+
+yr = 850:1849; yr = yr';
+tropical = [1258 1284 1809 1815];
+south = [1275 1341 1452];
+north = [1600 1641 1835];
+
+tropical_id = [409 435 960 966];
+south_id = [426 492 603];
+north_id = [751 792 986];
+
+ts_iens_re = reshape(ts_iens,[96 144 12 13872/12]);
+ts_seasonal = nanmean(ts_iens_re,4);
+ts_seasonal_re = repmat(ts_seasonal,[1 1 1 13872/12]);
+% ts_iens_ano = (ts_iens_re - ts_seasonal_re)./ts_seasonal_re.*100;
+ts_iens_ano = (ts_iens_re - ts_seasonal_re);
+        
+tmp1 = ts_iens_ano(:,:,12,1:end-1);
+tmp2 = ts_iens_ano(:,:,1:2,2:end);
+tmp1(:,:,2:3,:) = tmp2;
+ts_iens_winter = squeeze(nanmean(tmp1,3));
+ts_iens_SON = squeeze(nanmean(ts_iens_ano(:,:,9:11,:),3));
+ts_iens_MAM = squeeze(nanmean(ts_iens_ano(:,:,3:5,:),3));
+ts_iens_JJA = squeeze(nanmean(ts_iens_ano(:,:,6:8,:),3));
+
+idraw_yr = tropical_id; %！
+idraw_yr = 409;
+
+pattern = nanmean(ts_iens_JJA(:,:,idraw_yr),3); 
+pattern(:,:,2) = nanmean(ts_iens_SON(:,:,idraw_yr),3); 
+pattern(:,:,3) = nanmean(ts_iens_winter(:,:,idraw_yr),3); 
+pattern(:,:,4) = nanmean(ts_iens_MAM(:,:,idraw_yr+1),3); 
+pattern(:,:,5) = nanmean(ts_iens_JJA(:,:,idraw_yr+1),3); 
+pattern(:,:,6) = nanmean(ts_iens_SON(:,:,idraw_yr+1),3); 
+
+page_width = 18;
+page_height = 18;
+figure('Units','centimeters',...
+    'position',[0 0 page_width page_height],...
+    'PaperPosition',[0 0 page_width page_height],...
+    'color',[1 1 1]);
+
+% set position of three subplots
+nrow=2;
+ncol=3;
+width = 0.75/3;
+height = width./3;
+epsw = 0.025;
+epsh = 0.045;
+xstart=0.1;
+ystart=0.1;
+pos = zeros(nrow*ncol,4);
+for r=1:nrow
+    for c=1:ncol
+        pos((r-1)*ncol+c,1)=xstart + (c-1)*(width+epsw);
+        pos((r-1)*ncol+c,2)=1-(ystart+r*height+(r-1)*epsh);
+        pos((r-1)*ncol+c,3)=width;
+        pos((r-1)*ncol+c,4)=height;
+    end
+end
+
+Label_abc = {'a', 'b', 'c','d','e','f','g','h','i','j','k','l','m','n'};
+Label_season = {'JJA (1258)','SON (1258)','DJF (1258/1259)','MAM (1259)' ,'JJA (1259)',' SON(1259)'};
+
+load coastlines;
+
+for inum = 1:nrow * ncol
+    ax= axes('Position',pos(inum,:),'Color','none');
+    if inum ==1 || inum==4
+    set(ax, 'ylim' , [-65, 65],'YTick',-45:45:45,'TickDir','in', 'TickLength',[0.005/0.3, 0],...
+        'YTickLabel',{'45S','EQ' ,'45N'},'FontName','Helvetica','FontSize',11);
+    else 
+            set(ax, 'ylim' , [-65, 65],'YTick',-45:45:45,'TickDir','in', 'TickLength',[0.005/0.3, 0],...
+        'YTickLabel',{'','' ,''},'FontName','Helvetica','FontSize',11);
+    end
+    
+    if inum == 4|| inum==5 || inum==6
+    set(ax, 'xlim' , [-180 180], 'XTick',-90:90:90,'XTickLabel',{'90W','0','90E'},'FontName','Helvetica','FontSize',11);
+    else
+       set(ax, 'xlim' , [-180 180], 'XTick',-90:90:90,'XTickLabel',{'','',''},'FontName','Helvetica','FontSize',11);
+    end     
+    
+    hold on;
+    [c,h] = contourf(lon_af, lat_af,  pattern(:, :, inum), 'LevelList', [-100, -10 : 0.1 : 10, 100]);
+    h.LineColor = 'none';
+    load ttz_color_hgt.mat
+    ttz_color_flip = flipud(ttz_color_hgt);
+    mycolor(1,:) = [0 38 97]./255;
+    mycolor(2:6,:) = ttz_color_flip ([3 4 6 8 10],:);
+    mycolor(7,:) = [1 1 1]; mycolor(8,:) = [1 1 1];
+    mycolor(9:13,:) = ttz_color_flip([12 13 15 17 19],:);
+    mycolor(14,:) =  [141 0 0]./255;
+
+    x_original = 1:14;
+    x_new = linspace(1, 14, 150);
+    data_interp = zeros(150, 3);
+    for col = 1:3
+        data_interp(:, col) = interp1(x_original, mycolor(:, col), x_new, 'linear');  % 可选方法如 'spline'
+    end
+    colormap(data_interp);
+
+    clim([-2.5 2.5]);
+
+    plot(coastlon, coastlat,'k');
+    rectangle('Position',[40,-30,60,55],'FaceColor','none','EdgeColor',[68 206 133]./255,'LineWidth',1.5); hold on;
+    rectangle('Position',[-50,-5,60,10],'FaceColor','none','EdgeColor',[68 206 133]./255,'LineWidth',1.5); hold on;
+
+    box on;
+    grid on;
+    set(ax,'layer','top');
+
+    text(-180, 85, Label_abc{inum},  'FontName','Helvetica','horizontalalignment','left','FontSize',13,'FontWeight', 'bold');
+    text(180, 85, Label_season{inum},  'FontName','Helvetica','horizontalalignment','right','FontSize',11);
+end
+
+% colorbar
+cb1=colorbar(ax,'location','southoutside','position',[0.25 0.6 0.5 0.015],'FontSize', 12);
+cb1ax = axes('position', cb1.Position, 'visible', 'off');
+text(cb1ax, 0.5, -5, 'Change in SSTA  (\circ C)','Fontname','Helvetica','fontsize',12,'horizontalalignment','center' );
+
+img =gcf;
+print(img, '-dtiff', '-r600', './SupplymentaryFigure1.tif');
