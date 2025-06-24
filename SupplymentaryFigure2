@@ -1,0 +1,40 @@
+page_width = 18;
+page_height = 18;
+figure('Units','centimeters',...
+    'position',[0 0 page_width page_height],...
+    'PaperPosition',[0 0 page_width page_height],...
+    'color',[1 1 1]);
+
+% set position of three subplots
+nrow=1;
+ncol=1;
+width = 0.6 ;
+height = width./2;
+epsw = 0;
+epsh = 0;
+xstart=0.1;
+ystart=0.1;
+pos = zeros(nrow*ncol,4);
+for r=1:nrow
+    for c=1:ncol
+        pos((r-1)*ncol+c,1)=xstart + (c-1)*(width+epsw);
+        pos((r-1)*ncol+c,2)=1-(ystart+r*height+(r-1)*epsh);
+        pos((r-1)*ncol+c,3)=width;
+        pos((r-1)*ncol+c,4)=height;
+    end
+end
+
+inum = 1;
+ax= axes('Position',pos(inum,:),'Color','none');
+set(ax, 'ylim' , [-65, 65],'YTick',-45:45:45,'TickDir','in', 'TickLength',[0.005/0.3, 0],...
+    'YTickLabel',{'45S','EQ' ,'45N'},'FontName','Helvetica','FontSize',11);
+set(ax, 'xlim' , [-180 180], 'XTick',-90:90:90,'XTickLabel',{'90W','0','90E'},'FontName','Helvetica','FontSize',11);
+geoshow('/Users/yingyingfeng/Downloads/D/FengYingying/FengYingyingData/MapData/GLOBALSHP/ContinentsPoly.shp','FaceColor', [235/255,235/255,235/255]);
+
+rectangle('Position',[40,-30,60,55],'FaceColor','none','EdgeColor','b','LineWidth',1.5); hold on;
+rectangle('Position',[-50,-5,60,10],'FaceColor','none','EdgeColor',[171 16 15]./255,'LineWidth',1.5); hold on;
+grid off;
+set(ax,'layer','top');
+
+img =gcf;
+print(img, '-dtiff', '-r600', './SupplymentaryFigure2.tif');
