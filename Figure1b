@@ -1,0 +1,344 @@
+%%%%%%%%%%%%%%%%%Calculate Granger Causality%%%%%%%%%%%%%%%%%%
+
+hadisst = double(ncread('/Users/yingyingfeng/Downloads/Data/ERSST/ERsst.mnmean.nc','sst'));
+hadisst(hadisst<-100) = nan;
+lat_hadi = double(ncread('/Users/yingyingfeng/Downloads/Data/ERSST/ERsst.mnmean.nc','lat'));
+lon_hadi = double(ncread('/Users/yingyingfeng/Downloads/Data/ERSST/ERsst.mnmean.nc','lon'));
+hadisst_per = permute(hadisst,[2,1,3]); 
+
+sst_ilme = reshape(hadisst_per,89,180,12,2040/12); 
+sst_ilme_avg = nanmean(sst_ilme,4); 
+sst_ilme_avg_rep = repmat(sst_ilme_avg,1, 1, 1, 2040/12);
+sst_ilme_ano = sst_ilme - sst_ilme_avg_rep;
+clear sst_ilme; clear sst_ilme_avg; clear sst_ilme_avg_rep; clear ts_ens; clear ts_per_fl;
+sst_ilme_ano_series = reshape(sst_ilme_ano,89,180,2040);
+sst_ilme_ano_iens = sst_ilme_ano_series(:,:,553:1824);
+
+load /Users/yingyingfeng/Downloads/Data/Paleo3bs_Project/sst_idx_1900-2005_ERsst.mat sst_idx_obs;
+sst_idx = sst_idx_obs; clear sst_idx_obs;
+Nino_series = sst_idx(:,1);
+tmp = Nino_series;
+tmp_re = reshape(tmp,12,1272/12);
+tmp_re_rownmean = nanmean(tmp_re,2);
+tmp_re_anomaly = tmp_re - tmp_re_rownmean;
+Nino_anomaly = reshape(tmp_re_anomaly,1272,1);
+Nino_detrend = detrend(Nino_anomaly);
+Nino_zscore = zscore(Nino_detrend);
+
+sst_idx_run = sst_idx(:,:,1);
+
+%Nino
+Nino_mon_re = reshape(sst_idx_run(:,1),12,size(sst_idx_run,1)./12);
+Nino_series = squeeze(nanmean([Nino_mon_re(12,1:end-1);Nino_mon_re(1:2,2:end)],1))';
+
+s = size(sst_ilme_ano_iens);
+SST_detrend = nan(s(1),s(2),s(3));
+for ilat = 1:s(1)
+    for ilon = 1:s(2)
+        tmp = squeeze(sst_ilme_ano_iens(ilat,ilon,:));
+        index = find(isnan(tmp));
+
+        if size(index,1) >0
+            SST_detrend(ilat,ilon,:) = nan;
+        else
+            SST_detrend(ilat,ilon,:) = detrend(squeeze(sst_ilme_ano_iens(ilat,ilon,:)));
+        end
+    end
+end
+
+
+SST_zscore = nan(s(1),s(2),s(3));
+for ilat = 1:s(1)
+    for ilon = 1:s(2)
+        SST_zscore(ilat,ilon,:) = zscore(SST_detrend(ilat,ilon,:)); %对detrend后的数据起作用
+    end
+end
+
+SST_zscore(SST_zscore==0) = nan;
+
+ntrials   = 1;
+nobs      = 1272;
+
+regmode   = 'OLS';  % VAR model estimation regression mode ('OLS', 'LWR' or empty for default)
+icregmode = 'LWR';  % information criteria regression mode ('OLS', 'LWR' or empty for default)
+
+momax     = 24;     % maximum model order for model order estimation
+
+acmaxlags = 1000;   % maximum autocovariance lags (empty for automatic calculation)
+
+tstat     = '';     % statistical test for MVGC:  'F' for Granger's F-test (default) or 'chi2' for Geweke's chi2 test
+alpha     = 0.05;   % significance level for significance test
+mhtc      = 'FDR';  % multiple hypothesis test correction (see routine 'significance')
+nvars     = 2;
+
+F12 = nan(s(1),s(2));
+F21 = nan(s(1),s(2));
+sig12 = nan(s(1),s(2));
+sig21 = nan(s(1),s(2));
+order_result = nan(s(1),s(2));
+
+for ilat = 1:s(1)
+    for ilon = 1:s(2)
+        disp(['Processing pixel ' ':'  ' ilat' num2str(ilat)  ' , '  'ilon'  num2str(ilon) ' ...']);
+        X(1,:) = squeeze(SIC_zscore(ilat,ilon,:))';
+        X(2,:) = squeeze(Nino_zscore)';
+
+
+        index = find(isnan(SIC_zscore(ilat,ilon,:,:)));
+
+        if size(index,1) < 1
+            [AIC,BIC,moAIC,moBIC] = tsdata_to_infocrit(X,momax,icregmode);
+            morder = moAIC;
+            [A,SIG] = tsdata_to_var(X,morder,regmode);
+
+            if isbad(A)
+                fprintf(2,' *** skipping - VAR estimation failed\n');
+                continue
+            end
+
+            [G,info] = var_to_autocov(A,SIG);
+            if info.warnings ~=0 && info.error ~=0
+                fprintf(2,' *** skipping - var_to_autocov\n');
+                continue
+            end
+
+            FF = autocov_to_pwcgc(G);
+            tmp = ~isbad(FF,false);
+            if tmp ==0
+                fprintf(2,' *** skipping - warning autocov_to_pwcgc\n');
+                continue
+            end
+
+            F12(ilat,ilon) = FF(1,2); % estimated GC 2 -> 1  Nino series to SST
+            F21(ilat,ilon) = FF(2,1); % estimated GC 1 -> 2  SST to Nino series
+
+            pval = mvgc_pval(FF,morder,nobs,ntrials,1,1,nvars-2,tstat);
+            sig  = significance(pval,alpha,mhtc);
+            order_result(ilat,ilon) = moAIC;
+
+            sig12(ilat,ilon) = sig(1,2);
+            sig21(ilat,ilon) = sig(2,1);
+
+            disp(['Finish pixel ' ':'  ' ilat' num2str(ilat)  ' , '  'ilon'  num2str(ilon) ' ...']);
+        else
+            F12(ilat,ilon) = nan;
+            F21(ilat,ilon) = nan;
+            sig12(ilat,ilon) = nan;
+            sig21(ilat,ilon) = nan;
+            order_result(ilat,ilon) = nan;
+        end
+    end
+end
+
+save /Users/yingyingfeng/Downloads/Pacemaker/ERSST_gridsst2nino.mat F21 sig21 order_result;
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%calculated SSTA and plot SSTA with Granger causality %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+lat_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','latitude');
+lon_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','longitude');
+hadisst_per = permute(hadisst,[2,1,3]); 
+
+mask_sst_tmp = squeeze(hadisst_per(:,:,end)); clear hadisst_per;
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+
+lat_05deg = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon_05deg = -180+reso_lon/2:reso_lon:180-reso_lon/2;
+[glon_05deg,glat_05deg] = meshgrid(lon_05deg,lat_05deg);
+[nlat_05deg,nlon_05deg] = size(glon_05deg);
+
+display ('Generating Area Mask ...');
+map = ones(nlat_05deg,nlon_05deg);
+R = georasterref('RasterSize', [nlat_05deg nlon_05deg], ...
+      'RasterInterpretation', 'cells', 'ColumnsStartFrom', 'north', ...
+      'LatitudeLimits', [lat_05deg(end) lat_05deg(1)], 'LongitudeLimits', [lon_05deg(1) lon_05deg(end)]);
+ellipsid = referenceEllipsoid('Earth','km');  
+[~,areavec] = areamat(map,R,ellipsid);  
+[~,map_area0] = meshgrid(lon_05deg,areavec);
+mask_area = map_area0;
+mask_area(isnan(mask_sst)) = nan;
+%%%%
+
+load /Users/yingyingfeng/Downloads/Data/Paleo3bs_Project/Result_Data/iLME_full_ts_mme.mat ts_per_fl lat_af lon_af time_850_1849 time_1850_2005;
+size(ts_per_fl);
+ts_iens = squeeze(nanmean(ts_per_fl,4)); clear ts_per_fl;
+mask_area_rep = repmat(mask_area,[1 1 size(ts_iens,3)]);
+ts_iens(isnan(mask_area_rep)) = nan;
+
+yr = 850:1849; yr = yr';
+
+tropical = [1258 1284 1809 1815];
+south = [1275 1341 1452];
+north = [1600 1641 1835];
+
+tropical_id = [409 435 960 966];
+south_id = [426 492 603];
+north_id = [751 792 986];
+
+ts_iens_re = reshape(ts_iens,[96 144 12 13872/12]);
+ts_seasonal = nanmean(ts_iens_re,4);
+ts_seasonal_re = repmat(ts_seasonal,[1 1 1 13872/12]);
+ts_iens_ano = (ts_iens_re - ts_seasonal_re);
+        
+ts_iens_MJJ = squeeze(nanmean(ts_iens_ano(:,:,7:9,:),3));
+idraw_yr =409;
+
+pattern = nanmean(ts_iens_MJJ (:,:,idraw_yr),3); 
+
+page_width = 18;
+page_height = 18;
+figure('Units','centimeters',...
+    'position',[0 0 page_width page_height],...
+    'PaperPosition',[0 0 page_width page_height],...
+    'color',[1 1 1]);
+
+% set position of three subplots
+nrow=1;
+ncol=1;
+width = 0.5 ;
+height = width./3;
+epsw = 0;
+epsh = 0;
+xstart=0.1;
+ystart=0.1;
+pos = zeros(nrow*ncol,4);
+for r=1:nrow
+    for c=1:ncol
+        pos((r-1)*ncol+c,1)=xstart + (c-1)*(width+epsw);
+        pos((r-1)*ncol+c,2)=1-(ystart+r*height+(r-1)*epsh);
+        pos((r-1)*ncol+c,3)=width;
+        pos((r-1)*ncol+c,4)=height;
+    end
+end
+
+load coastlines;
+inum = 1;
+ax= axes('Position',pos(inum,:),'Color','none');
+set(ax, 'ylim' , [-65, 65],'YTick',-45:45:45,'TickDir','out', 'TickLength',[0.005/0.3, 0],...
+    'YTickLabel',{'45S','EQ' ,'45N'},'FontName','Helvetica','FontSize',12);
+set(ax, 'xlim' , [-180 180], 'XTick',-120:60:120,'XTickLabel',{'120W','60W','0','60E','120E'},'FontName','Helvetica','FontSize',12);
+%
+% counter
+hold on;
+[c,h] = contourf(lon_af, lat_af,  pattern(:, :, inum), 'LevelList', [-100, -10 : 0.1 : 10, 100]);
+h.LineColor = 'none';
+
+load ttz_color_hgt.mat
+ttz_color_flip = flipud(ttz_color_hgt);
+mycolor(1,:) = [0 38 97]./255;
+mycolor(2:6,:) = ttz_color_flip ([3 4 6 8 10],:);
+mycolor(7,:) = [1 1 1]; mycolor(8,:) = [1 1 1];
+mycolor(9:13,:) = ttz_color_flip([12 13 15 17 19],:);
+mycolor(14,:) =  [141 0 0]./255;
+
+x_original = 1:14;
+x_new = linspace(1, 14, 150);
+data_interp = zeros(150, 3);
+for col = 1:3
+    data_interp(:, col) = interp1(x_original, mycolor(:, col), x_new, 'linear');  % 可选方法如 'spline'
+end
+colormap(data_interp);
+
+hold on;
+clim([-2 2]);
+
+plot(coastlon, coastlat,'k');
+%
+cb1=colorbar(ax,'location','eastoutside','position',[0.625, 1-(0.1+0.5/3), 0.02, height],'FontSize', 12);
+cb1ax = axes('position', cb1.Position, 'visible', 'off');
+cb1.Ticks = [-1 0 1];
+cb1.TickLabels = {'-1', '0', '1'};  
+
+cb1.FontSize = 12; 
+%
+hold on;
+line_color = [0 0 0];
+
+hue_color = [224 213 233; 194 171 211; 163 129 189; 133 87 167; 102 45 145; 77 34 109; 51 23 73]./255;
+load BlueDarkRed18.mat;
+colormap_color = BlueDarkRed18;
+
+hold on;
+load  /Users/yingyingfeng/Downloads/Pacemaker/ERSST_gridsst2nino.mat F21 sig21 order_result;
+hadisst = double(ncread('/Users/yingyingfeng/Downloads/Data/ERSST/ERsst.mnmean.nc','sst'));
+hadisst(hadisst<-100) = nan;
+lat_hadi = double(ncread('/Users/yingyingfeng/Downloads/Data/ERSST/ERsst.mnmean.nc','lat'));
+lon_hadi = double(ncread('/Users/yingyingfeng/Downloads/Data/ERSST/ERsst.mnmean.nc','lon'))-180;
+
+OCN_MASK = double(ncread('/Users/yingyingfeng/Downloads/Pacemaker/MASK_gx1v6_OCEAN_MASK.nc','OCN_MASK'));
+OCN_MASK_per = permute(OCN_MASK,[2 1]);
+OCN_MASK_per_flip = flipud(OCN_MASK_per);
+TARGET_MASK = OCN_MASK_per_flip ;
+TARGET_MASK(TARGET_MASK~=2) = nan;
+
+
+A = TARGET_MASK; 
+[x_orig, y_orig] = meshgrid(1:320, 1:384);
+
+target_rows = 89;
+target_cols = 180;
+[x_new, y_new] = meshgrid( ...
+    linspace(1, 320, target_cols), ...  
+    linspace(1, 384, target_rows));    
+
+% interp
+TARGET_MASK_interp = interp2(x_orig, y_orig, A, x_new, y_new, 'linear');
+
+F21(sig21==0) = nan;
+F21(~isnan(TARGET_MASK_interp)) = nan;
+F21_final = F21; F21_final(:,1:90) = F21(:,91:180); F21_final(:,91:180) = F21(:,1:90);
+F21_final(:,144:180) = nan;
+
+ax2= axes('Position',pos(1,:),'Color','none');
+
+set(ax2, 'ylim' , [-65, 65],'YTick',-45:45:45,'TickDir','out', 'TickLength',[0.005/0.3, 0],...
+    'YTickLabel',{'45S','EQ' ,'45N'},'FontName','Helvetica','FontSize',12);
+set(ax2, 'xlim' , [-180 180], 'XTick',-120:60:120,'XTickLabel',{'120W','60W','0','60E','120E'},'FontName','Helvetica','FontSize',12);
+
+%
+hold on;
+is_sig = F21_final;
+seq = 5;
+for iilat = 1: seq : size(is_sig,1)
+    for iilon = 1: seq : 180
+        if iilat<size(is_sig,1)-seq-1
+            if iilon<size(is_sig,2)-seq-1
+                tmp =is_sig(iilat:iilat+seq,iilon:iilon+seq);
+                size_circle = nanmean(tmp(:));
+                num_nan = length(find(isnan(tmp(:))));
+                if ~isnan(size_circle) && num_nan<seq*seq/5*4
+                    lev = round(size_circle.*200);
+                                            if lev>7
+                                                lev = 7;
+                                            end
+                    scatter(ax2,lon_hadi(iilon+round(seq/2)),lat_hadi(iilat+round(seq/2)),lev*15,'filled','linewidth',0.5,'MarkerEdgeColor','none','MarkerFaceColor',hue_color(lev,:),'MarkerFaceAlpha', 0.3,'MarkerEdgeAlpha', 0.6);
+                    % plot(ax2,lon_hadi(iilon+round(seq/2)),lat_hadi(iilat+round(seq/2)),'o','MarkerSize',lev*1.5,'linewidth',0.5,'MarkerEdgeColor','none','MarkerFaceColor',hue_color(lev,:));
+                end
+            end
+        end
+    end
+end
+
+rectangle('Position',[40,-30,60,55],'FaceColor','none','EdgeColor',[68 206 133]./255,'LineWidth',1.5); hold on;
+rectangle('Position',[-50,-5,60,10],'FaceColor','none','EdgeColor',[68 206 133]./255,'LineWidth',1.5); hold on;
+grid off;
+set(ax,'layer','top');
+
+ax=gca;
+axes('position',ax.Position,'box','on','ytick',[],'xtick',[],'color','none');
+% plot hue_shade
+ax4= axes('Position',[0.18 0.1 0.64 0.64/3],'Color','none');
+set(gca,'Color','none','XColor','none','YColor','none');
+
+colormap(ax4,hue_color);
+caxis(ax4,[0,0.07]);
+cb2=colorbar(ax4,'location','southoutside','position',[0.25,0.225,0.5,0.015]);
+set(cb2,'ticks', [0.02,0.05], 'XTickLabel','','ticklength', 0.03 ,'fontsize',10);
+cb2ax = axes('position', cb2.Position, 'visible', 'off');
+text(cb2ax, [2/7,5/7],[-1.5,-1.5] ,{'0.02','0.05'},'Fontname','Helvetica','fontsize',10,'horizontalalignment','center' );
+
+text(cb2ax, 0.5, -3, 'G-causality value','Fontname','Helvetica','fontsize',10,'horizontalalignment','center' );
+
+img =gcf;
+print(img, '-dtiff', '-r600', './Figure_2b.tif');
