@@ -1,0 +1,265 @@
+%% calculated SST time series for 1256-1257
+nMembers = 15;
+TS = nan(144, 96, 60, nMembers); 
+baseDir = '/Users/yingyingfeng/Downloads/Pacemaker/TS/';
+
+% latlon
+lat = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lat');
+lon = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lon');
+
+% read TS data
+for i = 1:nMembers
+    memberStr = sprintf('%03d', i);
+    filename = sprintf('TS_merge_merge_b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.%s.cam.h0.1256_1260.nc', memberStr);
+    fullPath = fullfile(baseDir, filename);
+
+    if isfile(fullPath)
+        TS(:,:,:,i) = ncread(fullPath, 'TS');
+        fprintf('读取成功: %s\n', filename);
+    else
+        warning('文件不存在: %s\n', filename);
+    end
+end
+
+f_var_per = permute(TS,[2,1,3,4])-273.15; clear ts_ens_cesm;
+f_var_per_flip = flipud(f_var_per); clear f_var_per;
+lat_af = flipud(lat);
+lon_af = lon;
+clear lon; clear lat;
+
+s = size(f_var_per_flip);
+var_fi = nan(s(1),s(2),s(3),s(4));
+
+if(lon_af(1)>=0)
+    idx = find(lon_af<=180);
+    n1 = length(idx); n2 = length(lon_af)-length(idx);
+    tmp1 = lon_af(1:n1); tmp2 = lon_af(n1+1:end)-360;
+    lon_af(n2+1:end) = tmp1;
+    lon_af(1:n2) = tmp2;
+    tmp1 = f_var_per_flip(:,1:n1,:,:); tmp2 = f_var_per_flip(:,n1+1:end,:,:);
+    var_fi(:,1:n2,:,:) = tmp2;
+    var_fi(:,n2+1:end,:,:) = tmp1;
+end
+clear f_var_per_flip; clear tmp1; clear tmp2;
+ts_per_fl = var_fi; clear var_fi;
+clear var_fi; clear f_var_per_flip; clear f_var; clear ts_ens; clear f_var_per; clear tmp1; clear tmp2; 
+
+
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+lat_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','latitude');
+lon_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','longitude');
+hadisst_per = permute(hadisst,[2,1,3]);  % 1961-1-1  1093   %2005-12-15  1632
+
+mask_sst_tmp = squeeze(hadisst_per(:,:,end));
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+hadisst_per_re = imresample([1 1], hadisst_per,[reso_lon,reso_lat],'linear');
+
+lat_05deg = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon_05deg = -180+reso_lon/2:reso_lon:180-reso_lon/2;
+[glon_05deg,glat_05deg] = meshgrid(lon_05deg,lat_05deg);
+[nlat_05deg,nlon_05deg] = size(glon_05deg);
+
+display ('Generating Area Mask ...');
+map = ones(nlat_05deg,nlon_05deg);
+R = georasterref('RasterSize', [nlat_05deg nlon_05deg], ...
+    'RasterInterpretation', 'cells', 'ColumnsStartFrom', 'north', ...
+    'LatitudeLimits', [lat_05deg(end) lat_05deg(1)], 'LongitudeLimits', [lon_05deg(1) lon_05deg(end)]);
+ellipsid = referenceEllipsoid('Earth','km');
+[~,areavec] = areamat(map,R,ellipsid);
+[~,map_area0] = meshgrid(lon_05deg,areavec);
+mask_area = map_area0;
+mask_area(isnan(mask_sst)) = nan;
+
+nino_mask = mask_area;       % 5N-5S, 170W-120W
+nino_mask_final = mask_area;
+nino_mask(46:51,5:24) = 999; nino_mask(nino_mask~=999) = nan;
+nino_mask_final(isnan(nino_mask)) = nan;
+
+mask = nino_mask_final;
+for iens = 1:15
+    data_no_areaweight = squeeze(ts_per_fl(:,:,:,iens)); %!!!!%%%%%
+    mask_2D_mean = nanmean(reshape(mask,size(mask,1)*size(mask,2),1)); %%% 或：mask_2D_mean = nanmean(mask(:));
+    ss = size(data_no_areaweight);
+    temp = nan(ss(1),ss(2),ss(3));
+    for i = 1:ss(3)
+        temp(:,:,i) = data_no_areaweight(:,:,i).*mask./mask_2D_mean;    % 把ET数据转换为加权后的，以求加权平均值
+    end
+    data = temp;
+    s = size(data);
+    for i = 1:s(3)
+        t = squeeze(data(:,:,i));
+        data_series(i,iens) = nanmean(reshape(t,size(data,1)*size(data,2),1));
+    end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% calculated climatology Nino3.4
+TS = ncread('/Users/yingyingfeng/Downloads/Pacemaker/TS_1220_1250.nc','TS');
+lat = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lat');
+lon = ncread('/Users/yingyingfeng/Downloads/Pacemaker/b.e11.B1850C5CN.f19_g16.LME.Restart.to.1258.015.Pacemaker.cooling.mme.A.I..cam.h0.1258-06.nc','lon');
+
+f_var_per = permute(TS,[2,1,3])-273.15; clear ts_ens_cesm;
+f_var_per_flip = flipud(f_var_per); clear f_var_per;
+lat_af = flipud(lat);
+lon_af = lon;
+clear lon; clear lat;
+
+
+s = size(f_var_per_flip);
+var_fi = nan(s(1),s(2),s(3));
+
+if(lon_af(1)>=0)
+    idx = find(lon_af<=180);
+    n1 = length(idx); n2 = length(lon_af)-length(idx);
+    tmp1 = lon_af(1:n1); tmp2 = lon_af(n1+1:end)-360;
+    lon_af(n2+1:end) = tmp1;
+    lon_af(1:n2) = tmp2;
+    tmp1 = f_var_per_flip(:,1:n1,:); tmp2 = f_var_per_flip(:,n1+1:end,:);
+    var_fi(:,1:n2,:) = tmp2;
+    var_fi(:,n2+1:end,:) = tmp1;
+end
+clear f_var_per_flip; clear tmp1; clear tmp2;
+ts_per_fl = var_fi; clear var_fi;
+clear var_fi; clear f_var_per_flip; clear f_var; clear ts_ens; clear f_var_per; clear tmp1; clear tmp2; 
+
+ts_per_fl_re = reshape(ts_per_fl,[96 144 12 492/12]);
+ts_cli = squeeze(nanmean(ts_per_fl_re,4));
+
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+lat_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','latitude');
+lon_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','longitude');
+hadisst_per = permute(hadisst,[2,1,3]);  % 1961-1-1  1093   %2005-12-15  1632
+
+mask_sst_tmp = squeeze(hadisst_per(:,:,end));
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+hadisst_per_re = imresample([1 1], hadisst_per,[reso_lon,reso_lat],'linear');
+
+lat_05deg = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon_05deg = -180+reso_lon/2:reso_lon:180-reso_lon/2;
+[glon_05deg,glat_05deg] = meshgrid(lon_05deg,lat_05deg);
+[nlat_05deg,nlon_05deg] = size(glon_05deg);
+
+display ('Generating Area Mask ...');
+map = ones(nlat_05deg,nlon_05deg);
+R = georasterref('RasterSize', [nlat_05deg nlon_05deg], ...
+    'RasterInterpretation', 'cells', 'ColumnsStartFrom', 'north', ...
+    'LatitudeLimits', [lat_05deg(end) lat_05deg(1)], 'LongitudeLimits', [lon_05deg(1) lon_05deg(end)]);
+ellipsid = referenceEllipsoid('Earth','km');
+[~,areavec] = areamat(map,R,ellipsid);
+[~,map_area0] = meshgrid(lon_05deg,areavec);
+mask_area = map_area0;
+mask_area(isnan(mask_sst)) = nan;
+%%%%%%%%%%%%%%%%开始SST选区%%%%%%%%%%%%%%%%%%%%
+nino_mask = mask_area;       % 5N-5S, 170W-120W
+nino_mask_final = mask_area;
+nino_mask(46:51,5:24) = 999; nino_mask(nino_mask~=999) = nan;
+nino_mask_final(isnan(nino_mask)) = nan;
+
+mask = nino_mask_final;
+data_no_areaweight = ts_cli; %!!!!%%%%%
+mask_2D_mean = nanmean(reshape(mask,size(mask,1)*size(mask,2),1)); %%% or：mask_2D_mean = nanmean(mask(:));
+ss = size(data_no_areaweight);
+temp = nan(ss(1),ss(2),ss(3));
+for i = 1:ss(3)
+    temp(:,:,i) = data_no_areaweight(:,:,i).*mask./mask_2D_mean;    
+end
+data = temp;
+s = size(data);
+for i = 1:s(3)
+    t = squeeze(data(:,:,i));
+    data_cli_series(i,1) = nanmean(reshape(t,size(data,1)*size(data,2),1));
+end
+%% calculate and plot nino3.4 anomaly
+
+data_cli_series_fn = repmat(data_cli_series,[5,1]);
+
+for iens = 1:15
+    ano(:,iens) = data_series(1:60,iens) - data_cli_series_fn;
+end
+
+%%
+fsize = 12;
+page_width = 18; page_height = 18;
+figure('Units','centimeters',...
+    'position',[0 0 page_width page_height],...
+    'PaperPosition',[0 0 page_width page_height],...
+    'color',[1 1 1]);
+
+xstart = 0.1 ; ystart = 0.15;
+height = 0.25; width =0.8; epsx = 0.05;  epsy = 0.15;
+nrow = 3; ncol = 1;
+pos = zeros(nrow*ncol,4);
+for r0 = 1:nrow
+    for c = 1:ncol
+        n = (r0-1)*ncol+c;
+        pos(n,1) = xstart + (c-1)*width + (c-1)*epsx;
+        pos(n,2) = 1 - (ystart + r0*height + (r0-1)*epsy);
+        pos(n,3) = width;
+        pos(n,4) = height;
+    end
+end
+
+morandi_colors = [
+239 234 126;  % 1. 浅黄绿
+    37 158 137;   % 2. 青绿色
+    167 41 32;    % 3. 暗红
+    112 193 179;  % 4. 清爽海蓝绿
+    241 177 77;   % 5. 柔橙
+    91 135 200;   % 6. 莫兰迪蓝
+    218 109 129;  % 7. 莫兰迪玫粉
+    255 196 140;  % 8. 奶杏橘
+    153 204 102;  % 9. 柔绿
+    179 101 167;  % 10. 淡紫
+    80 116 142;   % 11. 深灰蓝
+    200 105 50;   % 12. 烟橘红
+    127 179 213;  % 13. 淡天蓝
+    173 173 173;  % 14. 石灰灰
+    97 82 130     % 15. 暗紫灰
+] ./ 255;
+
+
+
+for inum = 1
+    ax= axes('Position',pos(inum,:),'Color','none');
+
+    if inum ==1
+        for iens = 1:15
+        plot(1:60, movmean(ano(1:60,iens),5), '-',  'LineWidth', 1.5, 'LineJoin' ,'miter','Color',morandi_colors(iens,:));
+
+        hold on;
+        end
+        hold on;
+        % plot_final_plot_LME_mme = squeeze(nanmean(plot_final_LME(13:end,:,:),2));
+        % fh = fill([year, fliplr(year)], [(max(plot_final_plot_LME_mme,[],2))', fliplr( (min(plot_final_plot_LME_mme,[],2))' ) ], color_patch (3,:));
+        % % set(fh,'FaceColor', color_patch(3,:),'FaceAlpha',0.15,'EdgeColor','none','EdgeAlpha',0.4,'Linestyle','--');
+        % hold on;
+        % plot(year, ano, '-', 'Color', color_line(3,:), 'LineWidth', 1.5, 'LineJoin' ,'miter');
+        yline(0, '--k', 'LineWidth', 1); 
+        set(ax, 'YLim',[-5 5],'YTick',-4:1:4, 'TickDir','out','TickLength',[0.004/0.5, 0], 'fontname','Helvetica','fontsize',12,'yticklabel',{'-4','','-2','','0','','2','','4'});
+        %set(ax, 'XLim',[1 60],'XTick',1:3:60, 'TickDir','out','TickLength',[0.005/0.5, 0], 'fontname','Helvetica','fontsize',12,'xticklabel',{'1256-Jan','','','','1257-Jan','','','','1258-Jan','','','','1259-Jan','','','','1260-Jan','','',''});
+        set(gca, 'XAxisLocation', 'top');
+         set(ax, 'XLim',[1 60]);
+
+        ylabel('Nino3.4 Index','fontname','Helvetica','fontsize',12); 
+
+        ax = gca;
+        ax.XMinorTick = 'on';
+        ax.MinorGridLineStyle = ':';
+        ax.XAxis.MinorTickValues = 1:3:60;
+        ax.XTick = 1:12:61;
+        ax.XTickLabel = {'1256-Jan', '1257-Jan', '1258-Jan', '1259-Jan', '1260-Jan', '1261-Jan'};
+        ax.TickLength = [0.02, 0.01];  
+        
+    end
+  
+    box off;
+    ax=gca;
+    axes('position',ax.Position,'box','on','ytick',[],'xtick',[],'color','none');
+end
+% 
+img =gcf;
+print(img, '-dtiff', '-r600', 'tmp_nino3.4_1256_1260_mme_15ensemble.tif');
