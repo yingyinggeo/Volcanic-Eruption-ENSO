@@ -1,0 +1,277 @@
+%%
+hadisst = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','sst');
+lat_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','latitude');
+lon_hadi = ncread('/Users/yingyingfeng/Downloads/Data/HadISST_sst.nc','longitude');
+hadisst_per = permute(hadisst,[2,1,3]); 
+
+mask_sst_tmp = squeeze(hadisst_per(:,:,end)); clear hadisst_per;
+mask_sst_tmp(~isnan(mask_sst_tmp))=1;
+reso_lat = 1.875; reso_lon = 2.5;
+mask_sst = imresample([1 1], mask_sst_tmp,[reso_lon,reso_lat],'linear');
+
+lat_05deg = 90-reso_lat/2 : -reso_lat : -90+reso_lat/2;
+lon_05deg = -180+reso_lon/2:reso_lon:180-reso_lon/2;
+[glon_05deg,glat_05deg] = meshgrid(lon_05deg,lat_05deg);
+[nlat_05deg,nlon_05deg] = size(glon_05deg);
+
+display ('Generating Area Mask ...');
+map = ones(nlat_05deg,nlon_05deg);
+R = georasterref('RasterSize', [nlat_05deg nlon_05deg], ...
+      'RasterInterpretation', 'cells', 'ColumnsStartFrom', 'north', ...
+      'LatitudeLimits', [lat_05deg(end) lat_05deg(1)], 'LongitudeLimits', [lon_05deg(1) lon_05deg(end)]);
+ellipsid = referenceEllipsoid('Earth','km');  
+[~,areavec] = areamat(map,R,ellipsid);  
+[~,map_area0] = meshgrid(lon_05deg,areavec);
+mask_area = map_area0;
+mask_area(isnan(mask_sst)) = nan;
+
+lat_fd_mask = lat_05deg'; lon_fd_mask = lon_05deg';
+%%%%%%%%Nino%%%%%
+nino_mask = mask_area;       % 5N-5S, 170W-120W
+nino_mask_final = mask_area;
+nino_mask(46:51,5:24) = 999; nino_mask(nino_mask~=999) = nan;
+nino_mask_final(isnan(nino_mask)) = nan;
+
+%%%%%%%%ATL3%%%%%
+
+ATL3_mask = mask_area;  % ATL3 index 3°N–3°S, 0–20W
+ATL3_mask_final = mask_area;
+ATL3_mask(47:50,65:72) = 999; ATL3_mask(ATL3_mask~=999) = nan;
+ATL3_mask_final(isnan(ATL3_mask)) = nan;
+
+%%%%%%%IOB%%%%%%%boreal spring from March to May
+IOB_mask = mask_area; %20°S‒20°N and 40‒115°E
+IOB_mask_final = mask_area;
+IOB_mask(38:59,89:118) = 999; IOB_mask(IOB_mask~=999) = nan;
+IOB_mask_final(isnan(IOB_mask)) = nan;
+
+%%%%%%%%%%计算各个指数%%%%%%%%%%%%
+%
+load /Users/yingyingfeng/Downloads/Data/Paleo3bs_Project/Result_Data/iLME_full_ts_mme.mat ts_per_fl lat_af lon_af time_850_1849 time_1850_2005;
+run = 1:15;
+sst_idx = nan(13872,3,run(end));
+
+for irun = 1:15
+    ts_re_fullperiod = squeeze(ts_per_fl(:,:,:,irun));
+
+    %(1)
+    mask = nino_mask_final;
+    data_no_areaweight = ts_re_fullperiod; %!!!!%%%%%最
+    mask_2D_mean = nanmean(reshape(mask,size(mask,1)*size(mask,2),1)); %%% 或：mask_2D_mean = nanmean(mask(:));
+    ss = size(data_no_areaweight);
+    temp = nan(ss(1),ss(2),ss(3));
+    for i = 1:ss(3)
+        temp(:,:,i) = data_no_areaweight(:,:,i).*mask./mask_2D_mean;    % 把ET数据转换为加权后的，以求加权平均值
+    end
+    data = temp;
+    s = size(data);
+    for i = 1:s(3)
+        t = squeeze(data(:,:,i));
+        data_series(i,1) = nanmean(reshape(t,size(data,1)*size(data,2),1));
+    end
+    sst_idx(:,1,irun) = data_series; clear data_series;
+
+  %
+    mask = IOB_mask_final;
+    data_no_areaweight = ts_re_fullperiod; %!!!!%%%%%
+    mask_2D_mean = nanmean(reshape(mask,size(mask,1)*size(mask,2),1)); %%% 或：mask_2D_mean = nanmean(mask(:));
+    ss = size(data_no_areaweight);
+    temp = nan(ss(1),ss(2),ss(3));
+    for i = 1:ss(3)
+        temp(:,:,i) = data_no_areaweight(:,:,i).*mask./mask_2D_mean;    % 把ET数据转换为加权后的，以求加权平均值
+    end
+    data = temp;
+    s = size(data);
+    for i = 1:s(3)
+        t = squeeze(data(:,:,i));
+        data_series(i,1) = nanmean(reshape(t,size(data,1)*size(data,2),1));
+    end
+    sst_idx(:,2,irun) = data_series; clear data_series;
+
+
+    %
+    mask = ATL3_mask_final;
+    data_no_areaweight = ts_re_fullperiod; %!!!!%%%%%
+    mask_2D_mean = nanmean(reshape(mask,size(mask,1)*size(mask,2),1)); %%% 或：mask_2D_mean = nanmean(mask(:));
+    ss = size(data_no_areaweight);
+    temp = nan(ss(1),ss(2),ss(3));
+    for i = 1:ss(3)
+        temp(:,:,i) = data_no_areaweight(:,:,i).*mask./mask_2D_mean;    % 把ET数据转换为加权后的，以求加权平均值
+    end
+    data = temp;
+    s = size(data);
+    for i = 1:s(3)
+        t = squeeze(data(:,:,i));
+        data_series(i,1) = nanmean(reshape(t,size(data,1)*size(data,2),1));
+    end
+    sst_idx(:,3,irun) = data_series; clear data_series;%TNA 
+
+    
+sst_idx_re = reshape(sst_idx,12,13872/12,3,15);
+sst_cli = nanmean(sst_idx_re,2);
+sst_cli_rep = repmat(sst_cli,[1 1156 1 1]);
+sst_idx_ano = sst_idx_re - sst_cli_rep;
+
+ATL3_re = squeeze(sst_idx_ano(:,:,3,:));
+Nino_re = squeeze(sst_idx_ano(:,:,1,:));
+IOB_re = squeeze(sst_idx_ano(:,:,2,:));
+
+Nino_DJF = squeeze(nanmean([Nino_re(12,1:end-1,:);Nino_re(1:2,2:end,:)],1));
+ATL3_DJF = squeeze(nanmean([ATL3_re(12,1:end-1,:);ATL3_re(1:2,2:end,:)],1));
+IOB_MAM =squeeze(nanmean(IOB_re(3:5,:,:),1));
+
+yr = 850:1849; yr = yr';
+
+tropical = [1258 1284 1809 1815];
+south = [1275 1341 1452];
+north = [1176 1213 1600 1641 1762 1835];
+
+tropical_id = [409 435 960 966];
+south_id = [426 492 603];
+north_id = [327 364 751 792 913 986];
+        
+% IOBM & ATL3
+for itype = 1
+
+    if itype ==1
+        iid = tropical_id;
+    end
+
+    if itype == 2
+        iid = south_id;
+    end
+
+    if itype == 3
+        iid = north_id;
+    end
+
+   % ATL3_mask :  % ATL3 index 3°N–3°S, 0–20W
+   % nino_mask :    % 5N-5S, 170W-90W
+   IOB_vol = IOB_MAM(iid+1,:);
+   Nino_vol = Nino_DJF(iid+1,:);
+   ATL_vol = ATL3_DJF(iid,:);
+
+   ATL_2D = reshape(ATL_vol,size(ATL_vol,1).*size(ATL_vol,2),1);
+   Nino_2D = reshape(Nino_vol,size(Nino_vol,1).*size(Nino_vol,2),1);
+   IOB_2D = reshape(IOB_vol,size(IOB_vol,1).*size(IOB_vol,2),1);
+   [r,p] = corr(Nino_2D, ATL_2D)
+   [r,p] = corr(Nino_2D, IOB_2D)
+
+   X = [ATL_2D,IOB_2D];
+   Y = Nino_2D;
+
+   x1=[ones(size(X,1),1), X];
+   [c,~,~,~,stats]  = regress(Y,x1);
+   Y_regress = c(1,1)+c(2,1).*X(:,1)+c(3,1).*X(:,2); 
+   clear X;  clear x1; clear c; clear stats;
+
+end
+
+mdl = regstats(Y_regress,Y);
+r2 = mdl.adjrsquare
+p2 = mdl.tstat.pval(2)
+%%
+page_width = 20;
+page_height = 20;
+figure('Units','centimeters',...
+    'position',[0 0 page_width page_height],...
+    'PaperPosition',[0 0 page_width page_height],...
+    'color',[1 1 1]);
+nrow=1;
+ncol=3;
+width = 0.2;
+height = width;
+epsw = 0.1;
+epsh = 0.1;
+xstart=0.1;
+ystart=0.05;
+pos = zeros(nrow*ncol,4);
+for r=1:nrow
+    for c=1:ncol
+        pos((r-1)*ncol+c,1)=xstart + (c-1)*(width+epsw);
+        pos((r-1)*ncol+c,2)=1-(ystart+r*height+(r-1)*epsh);
+        pos((r-1)*ncol+c,3)=width;
+        pos((r-1)*ncol+c,4)=height;
+    end
+end
+
+Label_abc = {'a','b','c'};
+
+for inum = 1
+    ax= axes('Position',pos(inum,:),'Color','none');
+    set(ax, 'TickDir','out', 'TickLength',[0.006/0.3, 0],...
+        'FontName','Helvetica','FontSize',12);
+    axis([-2.5 0.5 -4 4]);
+    %
+    hold on %!!!!!!!!
+    x = IOB_2D;
+    y = Nino_2D;
+    scatter(x,y,25,'filled','MarkerFaceColor',[156 199 228]./255,'MarkerEdgeColor', [0.2 0.2 0.2]);
+    clear X;
+    p = polyfit(x,y, 1);       
+    yfit = polyval(p, x);      
+    xlabel('IOBM Index');
+    ylabel('Nino3.4 Index');
+
+    plot(x,yfit,'--','Color',[0 0 0]./255,'LineWidth',1);
+    hold on;
+    
+    box off;
+    ax=gca;
+    axes('position',ax.Position,'box','on','ytick',[],'xtick',[],'color','none');
+
+    r_round = roundn(r2,-2);
+end
+
+for inum = 2
+    ax= axes('Position',pos(inum,:),'Color','none');
+    set(ax, 'TickDir','out', 'TickLength',[0.006/0.3, 0],...
+        'FontName','Helvetica','FontSize',12);
+    axis([-2.5 0.5 -4 4]);
+    %
+    hold on;
+    x = IOB_2D;
+    y = Nino_2D;
+    scatter(x,y,25,'filled','MarkerFaceColor',[156 199 228]./255,'MarkerEdgeColor', [0.2 0.2 0.2]);
+    clear X;
+    p = polyfit(x,y, 1);       
+    yfit = polyval(p, x);      
+    xlabel('ATL3 Index');
+    ylabel('Nino3.4 Index');
+
+    plot(x,yfit,'--','Color',[0 0 0]./255,'LineWidth',1);
+    hold on;
+
+    box off;
+    ax=gca;
+    axes('position',ax.Position,'box','on','ytick',[],'xtick',[],'color','none');
+end
+
+for inum = 3
+
+    ax= axes('Position',pos(inum,:),'Color','none');
+    set(ax, 'TickDir','out', 'TickLength',[0.006/0.3, 0],...
+        'FontName','Helvetica','FontSize',12);
+    axis([-2 3 -2 3]);
+    %
+    hold on %!!!!!!!!
+    scatter(Y,Y_regress,25,'filled','MarkerFaceColor',[156 199 228]./255,'MarkerEdgeColor', [0.2 0.2 0.2]);
+    clear X;
+    X = [ones(length(Y),1),Y];
+    [b,bint,m,rint,stats] = regress(Y_regress,X);
+    y = b(1)+b(2)*Y;
+    hold on;
+    plot(Y,y,'--','Color',[0 0 0]./255,'LineWidth',1);
+    hold on;
+    % plot((-2:3),(-2:3),'[146 212 233]./255','LineWidth',1);
+    xlabel('Nino3.4 Index');
+    ylabel('Fitted Nino3.4 Index');
+
+    box off;
+    ax=gca;
+    axes('position',ax.Position,'box','on','ytick',[],'xtick',[],'color','none');
+
+end
+
+img =gcf;
+print(img, '-dtiff', '-r600', './Figure2c.tif');
